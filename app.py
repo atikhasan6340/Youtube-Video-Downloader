@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# app.py — YouTube Downloader (With Cookies Save + Admin Panel, Plain Cookies Supported)
+# app.py — YouTube Downloader (With Cookies Support)
 
 import os
 import uuid
@@ -18,9 +18,9 @@ app = Flask(__name__)
 ADMIN_PASSWORD = "@560@576"
 
 # ------------------------
-# HTML Template (Main Downloader UI)
+# HTML Template
 # ------------------------
-INDEX_HTML = """ 
+INDEX_HTML = """
 <!doctype html>
 <html lang="en">
 <head>
@@ -193,7 +193,7 @@ async function startDownload(){
 """
 
 # ------------------------
-# Cookies Admin Page (Table) with Copy Button
+# Cookies Admin Page
 # ------------------------
 COOKIES_HTML = """
 <!doctype html>
@@ -208,176 +208,151 @@ body { font-family: Arial; background:#1a1a1a; color:white; margin:0; padding:20
 #popup { display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:#2a2a2a; padding:20px; border-radius:12px; width:90%; max-width:400px; z-index:999; text-align:center; }
 button { background:#ff4444; color:white; border:none; padding:6px 12px; border-radius:6px; cursor:pointer; transition:0.2s; margin-left:5px; }
 button:hover { background:#ff6666; }
-.copyBtn { background:white; color:black; }
+.copy-btn { background:white; color:black; }
 table { width:100%; border-collapse:collapse; margin-top:20px; }
-th, td { padding:10px; text-align:left; border-bottom:1px solid #444; }
-.titleRed { color:red; }
+th, td { padding:10px; text-align:left; border-bottom:1px solid #444; word-break:break-all; }
 </style>
 </head>
 <body>
-<div id="overlay"></div>
-<div id="popup">
-<h2>Password</h2>
-<input type="password" id="adminPass" placeholder="Enter password" style="width:80%;padding:8px;margin-bottom:10px;"><br>
-<button onclick="submitPass()">Submit</button>
-<div id="status" style="color:#ff4444;margin-top:10px;"></div>
-</div>
-
-<div id="content" style="display:none;">
-<h2 class="titleRed">Cookies</h2>
+<h2>Saved Cookies</h2>
 <table>
-<tbody id="cookiesList"></tbody>
+<tr><th>Cookie</th><th>Actions</th></tr>
+{% for c in cookies %}
+<tr>
+<td>{{c}}</td>
+<td>
+<button class="copy-btn" onclick="copyCookie('{{c}}')">Copy</button>
+<button onclick="deleteCookie({{loop.index0}})">Delete</button>
+</td>
+</tr>
+{% endfor %}
 </table>
-</div>
+
+<div id="popup">Copied!</div>
+<div id="overlay" onclick="closePopup()"></div>
 
 <script>
-function showPopup(){ document.getElementById("overlay").style.display="block"; document.getElementById("popup").style.display="block"; }
-function hidePopup(){ document.getElementById("overlay").style.display="none"; document.getElementById("popup").style.display="none"; }
-
-function submitPass(){
-    let pass = document.getElementById("adminPass").value;
-    fetch("/check_password",{ method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ password: pass }) })
-    .then(r=>r.json()).then(j=>{
-        if(j.status=="ok"){ hidePopup(); loadCookies(); } 
-        else { document.getElementById("status").innerText = "Wrong password!"; }
-    });
+function copyCookie(val){
+    navigator.clipboard.writeText(val);
+    const popup = document.getElementById("popup");
+    popup.style.display="block";
+    setTimeout(()=>popup.style.display="none",1000);
 }
 
-function loadCookies(){
-    fetch("/get_cookies").then(r=>r.json()).then(j=>{
-        const list = document.getElementById("cookiesList");
-        list.innerHTML="";
-        if(j.cookies.length==0){ list.innerHTML="<tr><td colspan='2'>No cookies saved yet.</td></tr>"; }
-        else {
-            j.cookies.forEach((c, idx)=>{
-                let tr = document.createElement("tr");
-                let cookieEsc = c.replace(/"/g,'&quot;');
-                tr.innerHTML=`<td>${c}</td>
-                               <td>
-                                 <button class="copyBtn" onclick="copyCookie('${cookieEsc}')">Copy</button>
-                                 <button onclick="deleteCookie(${idx})">Delete</button>
-                               </td>`;
-                list.appendChild(tr);
-            });
-        }
-        document.getElementById("content").style.display="block";
-    });
+function deleteCookie(idx){
+    fetch("/delete_cookie", {
+        method:"POST",
+        headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ index: idx })
+    }).then(()=>location.reload());
 }
 
-function deleteCookie(idx){ fetch("/delete_cookie/"+idx, { method:"POST" }).then(r=>loadCookies()); }
-function copyCookie(val){ navigator.clipboard.writeText(val); alert("Copied!"); }
-
-showPopup();
+function closePopup(){
+    document.getElementById("popup").style.display="none";
+}
 </script>
 </body>
 </html>
 """
 
 # ------------------------
-# Helper function to convert plain cookie string to dict
-def cookies_string_to_dict(cookies_str):
-    cookies_dict = {}
-    for pair in cookies_str.split(";"):
-        if "=" in pair:
-            k, v = pair.strip().split("=", 1)
-            cookies_dict[k] = v
-    return cookies_dict
-
-# ------------------------
 # Routes
 # ------------------------
-@app.route('/')
-def index():
-    return render_template_string(INDEX_HTML)
+@app.route("/")
+def index(): return render_template_string(INDEX_HTML)
 
 @app.route("/save_cookies", methods=["POST"])
 def save_cookies():
     data = request.get_json() or {}
-    cookies = data.get("cookies","").strip()
-    if not cookies: return jsonify({"error":"No cookies provided"}),400
-    with open(PERMANENT_COOKIES_FILE,"a",encoding="utf-8") as f:
-        f.write(cookies+"\n---\n")
-    return jsonify({"status":"saved"}),200
-
-# ---------- Cookies Admin ----------
-@app.route("/cookies")
-def cookies_page(): return render_template_string(COOKIES_HTML)
-
-@app.route("/check_password", methods=["POST"])
-def check_password():
-    data = request.get_json() or {}
-    return jsonify({"status":"ok"} if data.get("password")==ADMIN_PASSWORD else {"status":"fail"})
-
-@app.route("/get_cookies")
-def get_cookies():
-    if os.path.exists(PERMANENT_COOKIES_FILE):
-        with open(PERMANENT_COOKIES_FILE,"r",encoding="utf-8") as f:
-            cookies = [l.strip() for l in f.read().split("---") if l.strip()]
-    else: cookies=[]
-    return jsonify({"cookies":cookies})
-
-@app.route("/delete_cookie/<int:idx>", methods=["POST"])
-def delete_cookie(idx):
-    if os.path.exists(PERMANENT_COOKIES_FILE):
-        with open(PERMANENT_COOKIES_FILE,"r",encoding="utf-8") as f:
-            cookies = [l.strip() for l in f.read().split("---") if l.strip()]
-        if 0<=idx<len(cookies):
-            cookies.pop(idx)
-            with open(PERMANENT_COOKIES_FILE,"w",encoding="utf-8") as f:
-                for c in cookies: f.write(c+"\n---\n")
+    cookie = data.get("cookies","").strip()
+    if cookie:
+        with open(PERMANENT_COOKIES_FILE,"a") as f:
+            f.write(cookie+"\n")
     return jsonify({"status":"ok"})
 
-# ---------- Formats ----------
+@app.route("/cookies_admin/<pw>")
+def cookies_admin(pw):
+    if pw!=ADMIN_PASSWORD: abort(403)
+    if os.path.exists(PERMANENT_COOKIES_FILE):
+        with open(PERMANENT_COOKIES_FILE) as f:
+            cookies = [x.strip() for x in f.readlines() if x.strip()]
+    else: cookies=[]
+    return render_template_string(COOKIES_HTML, cookies=cookies)
+
+@app.route("/delete_cookie", methods=["POST"])
+def delete_cookie():
+    data = request.get_json() or {}
+    idx = data.get("index")
+    if os.path.exists(PERMANENT_COOKIES_FILE):
+        with open(PERMANENT_COOKIES_FILE) as f:
+            cookies = [x.strip() for x in f.readlines() if x.strip()]
+        if idx is not None and 0<=idx<len(cookies):
+            cookies.pop(idx)
+            with open(PERMANENT_COOKIES_FILE,"w") as f: f.write("\n".join(cookies)+"\n")
+    return jsonify({"status":"ok"})
+
 @app.route("/formats", methods=["POST"])
 def formats():
     url = request.form.get("url")
-    cookies_str = request.form.get("cookies","").strip()
+    cookies = request.form.get("cookies","").strip()
     if not url: return jsonify({"error":"No URL provided"}),400
+
+    ydl_opts = {"quiet": True, "no_warnings": True}
+    if cookies: ydl_opts["add_headers"] = {"Cookie": cookies}
+
     try:
-        ydl_opts = {"quiet": True, "no_warnings": True}
-        if cookies_str:
-            ydl_opts["cookiefile"] = None
-            ydl_opts["cookies"] = cookies_string_to_dict(cookies_str)
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             fmts=[]
             for f in info.get("formats",[]):
                 if f.get("ext")!="mp4" or f.get("vcodec")=="none": continue
-                fmts.append({"format_id":f["format_id"],"ext":f["ext"],"resolution":f.get("resolution") or f"{f.get('height','audio')}p","filesize":f.get("filesize")})
-            return jsonify({"title":info.get("title"),"formats":fmts})
+                fmts.append({
+                    "format_id": f["format_id"],
+                    "ext": f["ext"],
+                    "resolution": f.get("resolution") or f"{f.get('height','audio')}p",
+                    "filesize": f.get("filesize")
+                })
+            return jsonify({"title": info.get("title"), "formats": fmts})
     except Exception as e:
-        return jsonify({"error":str(e)}),500
+        return jsonify({"error": str(e)}), 500
 
-# ---------- Download ----------
 @app.route("/download_wait", methods=["POST"])
 def download_wait():
     data = request.get_json() or {}
     url = data.get("url")
     fmt = data.get("format")
-    cookies_str = data.get("cookies","").strip()
+    cookies = data.get("cookies","").strip()
     if not url or not fmt: return jsonify({"error":"URL or format missing"}),400
+
     video_id = uuid.uuid4().hex
     filepath = os.path.join(TEMP_DOWNLOADS,f"{video_id}.mp4")
-    ydl_opts={"format": fmt+"+bestaudio/best","outtmpl":filepath,"merge_output_format":"mp4","quiet": True,"no_warnings": True}
-    if cookies_str:
-        ydl_opts["cookiefile"] = None
-        ydl_opts["cookies"] = cookies_string_to_dict(cookies_str)
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl: ydl.download([url])
-    return jsonify({"video_id":video_id})
+    ydl_opts = {
+        "format": fmt+"+bestaudio/best",
+        "outtmpl": filepath,
+        "merge_output_format":"mp4",
+        "quiet": True,
+        "no_warnings": True
+    }
+    if cookies: ydl_opts["add_headers"] = {"Cookie": cookies}
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+        return jsonify({"video_id": video_id})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/download_file/<video_id>")
 def download_file(video_id):
-    path = os.path.join(TEMP_DOWNLOADS,f"{video_id}.mp4")
-    if not os.path.exists(path): abort(404)
-    @after_this_request
-    def remove_file(response):
-        try: os.remove(path)
-        except: pass
-        return response
-    return send_file(path, as_attachment=True)
+    filepath = os.path.join(TEMP_DOWNLOADS,f"{video_id}.mp4")
+    if os.path.exists(filepath):
+        @after_this_request
+        def remove_file(response):
+            try: os.remove(filepath)
+            except: pass
+            return response
+        return send_file(filepath, as_attachment=True)
+    return "File not found",404
 
-# ------------------------
-# Run App
-# ------------------------
 if __name__=="__main__":
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    app.run(host="0.0.0.0", port=5000)
